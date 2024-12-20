@@ -1,7 +1,18 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from bt_ddos_shield.address import Address, AbstractAddressSerializer, AddressDeserializationException
+import bittensor
+import bittensor_wallet
+from bittensor.core.extrinsics.serving import (
+    get_metadata,
+    publish_metadata,
+)
+
+from bt_ddos_shield.address import (
+    AbstractAddressSerializer,
+    Address,
+    AddressDeserializationException,
+)
 from bt_ddos_shield.utils import Hotkey
 
 
@@ -50,3 +61,56 @@ class AbstractBlockchainManager(ABC):
         Get data from blockchain for given user identified by hotkey or None if not found.
         """
         pass
+
+
+class BittensorBlockchainManager(AbstractBlockchainManager):
+    """
+    Bittensor BlockchainManager implementation using commitments of knowledge as storage.
+    """
+
+    def __init__(
+        self,
+        address_serializer: AbstractAddressSerializer,
+        subtensor: bittensor.Subtensor,
+        wallet: bittensor_wallet.Wallet,
+        netuid: int,
+    ):
+        super().__init__(address_serializer)
+
+        self.subtensor = subtensor
+        self.wallet = wallet
+        self.netuid = netuid
+
+    def get(self, hotkey: Hotkey) -> Optional[bytes]:
+        """
+        Get data from blockchain for given user identified by hotkey or None if not found.
+        """
+
+        metadata = get_metadata(
+            self.subtensor,
+            self.netuid,
+            hotkey,
+        )
+
+        try:
+            commitment = metadata["info"]["fields"][0]  # type: ignore
+            hex_data = commitment[list(commitment.keys())[0]][2:]  # type: ignore
+            return bytes.fromhex(hex_data)
+        except TypeError:
+            return None
+
+    def put(self, hotkey: Hotkey, data: bytes):
+        """
+        Put data to blockchain for given user identified by hotkey.
+        """
+
+        if hotkey != self.wallet.hotkey.ss58_address:
+            raise ValueError("Hotkey not in Wallet")
+
+        publish_metadata(
+            self.subtensor,
+            self.wallet,
+            self.netuid,
+            f"Raw{len(data)}",
+            data,
+        )
